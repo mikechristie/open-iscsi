@@ -1583,6 +1583,33 @@ int iscsi_sysfs_get_session_state(char *state, int sid)
 	return 0;
 }
 
+static const struct {
+	enum iscsi_kern_conn_state state;
+	char *name;
+} conn_states[] = {
+	{ ISCSI_CONN_UP, "up" },
+	{ ISCSI_CONN_DOWN, "down" },
+	{ ISCSI_CONN_FAILED, "failed" },
+	{ ISCSI_CONN_BOUND, "bound" },
+};
+
+int iscsi_sysfs_get_conn_state_var(int sid)
+{
+	char state_buf[SCSI_MAX_STATE_VALUE] = { 0 };
+	int i, rc;
+
+	rc = iscsi_sysfs_get_conn_state(state_buf, sid);
+	if (rc)
+		return rc;
+
+	for (i = 0; i < ISCSI_CONN_STATE_UNKNOWN; i++) {
+		if (!strcmp(state_buf, conn_states[i].name))
+			return conn_states[i].state;
+	}
+
+	return ISCSI_CONN_STATE_UNKNOWN;
+}
+
 int iscsi_sysfs_get_conn_state(char *state, int sid)
 {
 	char id[NAME_SIZE];
