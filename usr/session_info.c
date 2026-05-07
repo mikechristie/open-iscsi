@@ -158,6 +158,15 @@ static int print_iscsi_state(int sid, char *prefix, int tmo)
 		state = session_state[rsp.u.session_state.session_state];
 	printf("%s\t\tInternal iscsid Session State: %s\n", prefix,
 	       state ? state : "Unknown");
+
+	memset(state_buff, 0, SCSI_MAX_STATE_VALUE);
+	if (!iscsi_sysfs_get_conn_state(state_buff, sid))
+		printf("%s\t\tInternal iSCSI Class Connection State: %s\n",
+		       prefix, state_buff);
+	else
+		printf("%s\t\tInternal iSCSI Class Connection State: Unknown\n",
+		       prefix);
+
 	return 0;
 }
 
