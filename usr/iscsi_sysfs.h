@@ -93,6 +93,16 @@ extern void iscsi_sysfs_get_negotiated_conn_conf(int sid,
 extern pid_t iscsi_sysfs_scan_host(int hostno, int sid, int async, bool rescan);
 extern int iscsi_sysfs_get_session_state(char *state, int sid);
 
+enum iscsi_kern_tgt_state {
+	ISCSI_TGT_UNBOUND = 0,
+	ISCSI_TGT_ALLOCATED,
+	ISCSI_TGT_SCANNED,
+	ISCSI_TGT_UNBINDING,
+	ISCSI_TGT_STATE_UNKNOWN,       /* end val */
+};
+
+extern int iscsi_sysfs_get_tgt_state_var(int sid);
+
 enum iscsi_kern_conn_state {
 	ISCSI_CONN_UP = 0,
 	ISCSI_CONN_DOWN,

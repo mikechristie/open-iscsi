@@ -1583,6 +1583,44 @@ int iscsi_sysfs_get_session_state(char *state, int sid)
 	return 0;
 }
 
+static int iscsi_sysfs_get_tgt_state(char *state, int sid)
+{
+	char id[NAME_SIZE];
+
+	snprintf(id, sizeof(id), ISCSI_SESSION_ID, sid);
+	if (sysfs_get_str(id, ISCSI_SESSION_SUBSYS, "target_state", state,
+			  SCSI_MAX_STATE_VALUE))
+		return ISCSI_ERR_SYSFS_LOOKUP;
+	return 0;
+}
+
+static const struct {
+	enum iscsi_kern_tgt_state state;
+	char *name;
+} tgt_states[] = {
+	{ ISCSI_TGT_UNBOUND, "UNBOUND" },
+	{ ISCSI_TGT_ALLOCATED, "ALLOCATED" },
+	{ ISCSI_TGT_SCANNED, "SCANNED" },
+	{ ISCSI_TGT_UNBINDING, "UNBINDING" },
+};
+
+int iscsi_sysfs_get_tgt_state_var(int sid)
+{
+	char state_buf[SCSI_MAX_STATE_VALUE] = { 0 };
+	int i, rc;
+
+	rc = iscsi_sysfs_get_tgt_state(state_buf, sid);
+	if (rc)
+		return rc;
+
+	for (i = 0; i < ISCSI_TGT_STATE_UNKNOWN; i++) {
+		if (!strcmp(state_buf, tgt_states[i].name))
+			return tgt_states[i].state;
+	}
+
+	return ISCSI_TGT_STATE_UNKNOWN;
+}
+
 static const struct {
 	enum iscsi_kern_conn_state state;
 	char *name;
