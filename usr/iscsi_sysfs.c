@@ -1308,23 +1308,139 @@ int iscsi_sysfs_get_sid_from_path(char *session)
 	return -1;
 }
 
-int iscsi_sysfs_get_sessioninfo_by_id(struct session_info *info, char *session)
+/**
+ * iscsi_sysfs_get_required_sess_info - Get info required for record lookup
+ * @info: session_info to fill out (sid must be set)
+ * @session: sysfs session string
+ * @strict: if false will take into account missing files in older kernels.
+ *
+ * This reads in the info needed to read in a record which includes
+ * target name, tpgt, portal address and port, and the ifacename.
+ */
+static int
+iscsi_sysfs_get_required_sess_info(struct session_info *info,
+				   char *session, bool strict)
 {
 	char id[NAME_SIZE];
-	int ret, pers_failed = 0;
+	int pers_failed = 0;
+	int ret;
+
+	memset(info->targetname, 0, sizeof(info->targetname));
+	ret = sysfs_get_str(session, ISCSI_SESSION_SUBSYS, "targetname",
+			    info->targetname, sizeof(info->targetname));
+	if (ret) {
+		log_error("%s: could not read session targetname: %d",
+			  session, ret);
+		return ISCSI_ERR_SYSFS_LOOKUP;
+	}
+
+	info->tpgt = PORTAL_GROUP_TAG_UNKNOWN;
+	ret = sysfs_get_int(session, ISCSI_SESSION_SUBSYS, "tpgt",
+			    &info->tpgt);
+	if (ret) {
+		log_error("%s: could not read session tpgt: %d",
+			  session, ret);
+		return ISCSI_ERR_SYSFS_LOOKUP;
+	}
+
+	if (info->tpgt == PORTAL_GROUP_TAG_UNKNOWN) {
+		log_error("%s: tpgt is not set: %d", session, ret);
+		return ISCSI_ERR_SYSFS_LOOKUP;
+	}
+
+	snprintf(id, sizeof(id), ISCSI_CONN_ID, info->sid);
+	/* some HW drivers do not export addr and port */
+	memset(info->persistent_address, 0, NI_MAXHOST);
+	ret = sysfs_get_str(id, ISCSI_CONN_SUBSYS, "persistent_address",
+			    info->persistent_address,
+			    sizeof(info->persistent_address));
+	if (ret) {
+		if (strict) {
+			log_error("%s: Could not read persistent_address: %d",
+				  session, ret);
+			return ISCSI_ERR_SYSFS_LOOKUP;
+		}
+
+		pers_failed = 1;
+		/* older qlogic does not support this */
+		log_debug(5, "could not read pers conn addr: %d", ret);
+	}
+
+	memset(info->address, 0, NI_MAXHOST);
+	ret = sysfs_get_str(id, ISCSI_CONN_SUBSYS, "address",
+			    info->address, sizeof(info->address));
+	if (ret) {
+		if (strict) {
+			log_error("%s: Could not read address: %d", session,
+				  ret);
+			return ISCSI_ERR_SYSFS_LOOKUP;
+		}
+
+		log_debug(5, "could not read curr addr: %d", ret);
+		/* iser did not export this */
+		if (!pers_failed)
+			strcpy(info->address, info->persistent_address);
+	} else if (pers_failed)
+		/*
+		 * for qla if we could not get the persistent addr
+		 * we will use the current for both addrs
+		 */
+		strcpy(info->persistent_address, info->address);
+	pers_failed = 0;
+
+	info->persistent_port = -1;
+	ret = sysfs_get_int(id, ISCSI_CONN_SUBSYS, "persistent_port",
+			    &info->persistent_port);
+	if (ret) {
+		if (strict) {
+			log_error("%s: Could not read persistent_port: %d",
+				  session, ret);
+			return ISCSI_ERR_SYSFS_LOOKUP;
+		}
+
+		pers_failed = 1;
+		log_debug(5, "Could not read pers conn port %d", ret);
+	}
+
+	info->port = -1;
+	ret = sysfs_get_int(id, ISCSI_CONN_SUBSYS, "port", &info->port);
+	if (ret) {
+		if (strict) {
+			log_error("%s: Could not read port: %d", session, ret);
+			return ISCSI_ERR_SYSFS_LOOKUP;
+		}
+
+		/* iser did not export this */
+		if (!pers_failed)
+			info->port = info->persistent_port;
+		log_debug(5, "Could not read curr conn port %d", ret);
+	} else if (pers_failed)
+		/*
+		 * for qla if we could not get the persistent addr
+		 * we will use the current for both addrs
+		 */
+		info->persistent_port = info->port;
+
+	ret = iscsi_sysfs_read_ifacename(&info->iface, session, false);
+	if (ret)
+		return ret;
+
+	return 0;
+}
+
+int iscsi_sysfs_get_sessioninfo_by_id(struct session_info *info, char *session)
+{
 	uint32_t host_no;
+	int ret;
 
 	if (sscanf(session, "session%d", &info->sid) != 1) {
 		log_error("invalid session '%s'", session);
 		return ISCSI_ERR_INVAL;
 	}
 
-	ret = sysfs_get_str(session, ISCSI_SESSION_SUBSYS, "targetname",
-			    info->targetname, sizeof(info->targetname));
-	if (ret) {
-		log_error("could not read session targetname: %d", ret);
-		return ISCSI_ERR_SYSFS_LOOKUP;
-	}
+	ret = iscsi_sysfs_get_required_sess_info(info, session, false);
+	if (ret)
+		return ret;
 
 	ret = sysfs_get_str(session, ISCSI_SESSION_SUBSYS, "username",
 				(info->chap).username,
@@ -1370,64 +1486,6 @@ int iscsi_sysfs_get_sessioninfo_by_id(struct session_info *info, char *session)
 	if (ret)
 		(info->tmo).abort_tmo = -1;
 
-	ret = sysfs_get_int(session, ISCSI_SESSION_SUBSYS, "tpgt",
-			    &info->tpgt);
-	if (ret) {
-		log_error("could not read session tpgt: %d", ret);
-		return ISCSI_ERR_SYSFS_LOOKUP;
-	}
-
-	snprintf(id, sizeof(id), ISCSI_CONN_ID, info->sid);
-	/* some HW drivers do not export addr and port */
-	memset(info->persistent_address, 0, NI_MAXHOST);
-	ret = sysfs_get_str(id, ISCSI_CONN_SUBSYS, "persistent_address",
-			    info->persistent_address,
-			    sizeof(info->persistent_address));
-	if (ret) {
-		pers_failed = 1;
-		/* older qlogic does not support this */
-		log_debug(5, "could not read pers conn addr: %d", ret);
-	}
-
-	memset(info->address, 0, NI_MAXHOST);
-	ret = sysfs_get_str(id, ISCSI_CONN_SUBSYS, "address",
-			    info->address, sizeof(info->address));
-	if (ret) {
-		log_debug(5, "could not read curr addr: %d", ret);
-		/* iser did not export this */
-		if (!pers_failed)
-			strcpy(info->address, info->persistent_address);
-	} else if (pers_failed)
-		/*
-		 * for qla if we could not get the persistent addr
-		 * we will use the current for both addrs
-		 */
-		strcpy(info->persistent_address, info->address);
-	pers_failed = 0;
-
-	info->persistent_port = -1;
-	ret = sysfs_get_int(id, ISCSI_CONN_SUBSYS, "persistent_port",
-			    &info->persistent_port);
-	if (ret) {
-		pers_failed = 1;
-		log_debug(5, "Could not read pers conn port %d", ret);
-	}
-
-	info->port = -1;
-	ret = sysfs_get_int(id, ISCSI_CONN_SUBSYS, "port", &info->port);
-	if (ret) {
-		/* iser did not export this */
-		if (!pers_failed)
-			info->port = info->persistent_port;
-		log_debug(5, "Could not read curr conn port %d", ret);
-	} else if (pers_failed)
-		/*
-		 * for qla if we could not get the persistent addr
-		 * we will use the current for both addrs
-		 */
-		info->persistent_port = info->port;
-
-	ret = 0;
 	host_no = iscsi_sysfs_get_host_no_from_sid(info->sid, &ret);
 	if (ret) {
 		log_error("could not get host_no for session%d: %s.",
