@@ -729,6 +729,54 @@ static int iscsi_sysfs_read_boot(struct iface_rec *iface, char *session)
 	return 0;
 }
 
+static int iscsi_sysfs_read_ifacename(struct iface_rec *iface, char *session,
+				      bool strict)
+{
+	int ret;
+
+	memset(iface->name, 0, sizeof(iface->name));
+	/*
+	 * this is on the session, because we support multiple bindings
+	 * per device.
+	 */
+	if (!session)
+		return 0;
+
+	ret = sysfs_get_str(session, ISCSI_SESSION_SUBSYS, "ifacename",
+			    iface->name, sizeof(iface->name));
+	if (!ret)
+		return 0;
+
+	/*
+	 * this was added after 2.0.869 so we could be doing iscsi_tcp
+	 * session binding, but there may not be an ifacename set if
+	 * binding is not used.
+	 */
+	if (strict) {
+		log_error("%s: Could not read ifacename: %d", session, ret);
+		return ret;
+	}
+
+	log_debug(7, "could not read iface name for session %s", session);
+	/*
+	 * if the ifacename file is not there then we are using an
+	 * older kernel and can try to find the binding by the net
+	 * info which was used on these older kernels.
+	 */
+	ret = iface_get_by_net_binding(iface, iface);
+	if (!ret)
+		return 0;
+
+	if (strict) {
+		log_error("%s: Could not read ifacename: %d", session, ret);
+		return ret;
+	}
+
+	log_debug(7, "Could not find iface for session bound to:" iface_fmt "",
+		  iface_str(iface));
+	return 0;
+}
+
 /*
  * Read in iface settings based on host and session values. If
  * session is not passed in, then the ifacename will not be set. And
@@ -828,34 +876,9 @@ static int iscsi_sysfs_read_iface(struct iface_rec *iface, int host_no,
 	sysfs_get_str(host_id, ISCSI_HOST_SUBSYS, "port_speed",
 		      iface->port_speed, sizeof(iface->port_speed));
 
-	/*
-	 * this is on the session, because we support multiple bindings
-	 * per device.
-	 */
-	memset(iface->name, 0, sizeof(iface->name));
-	if (session) {
-		/*
-		 * this was added after 2.0.869 so we could be doing iscsi_tcp
-		 * session binding, but there may not be an ifacename set
-		 * if binding is not used.
-		 */
-		ret = sysfs_get_str(session, ISCSI_SESSION_SUBSYS, "ifacename",
-				    iface->name, sizeof(iface->name));
-		if (ret) {
-			log_debug(7, "could not read iface name for "
-				  "session %s", session);
-			/*
-			 * if the ifacename file is not there then we are
-			 * using a older kernel and can try to find the
-			 * binding by the net info which was used on these
-			 * older kernels.
-			 */
-			if (iface_get_by_net_binding(iface, iface))
-				log_debug(7, "Could not find iface for session "
-					  "bound to:" iface_fmt "",
-					  iface_str(iface));
-		}
-	}
+	ret = iscsi_sysfs_read_ifacename(iface, session, false);
+	if (ret)
+		goto done;
 
 	if (session && t && t->template->use_boot_info)
 		iscsi_sysfs_read_boot(iface, session);
