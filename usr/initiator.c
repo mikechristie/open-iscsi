@@ -1245,9 +1245,8 @@ static void iscsi_recv_async_msg(iscsi_conn_t *conn, struct iscsi_hdr *hdr)
 			break;
 		}
 
-		if (sshdr.asc == 0x3f && sshdr.ascq == 0x0e
-		    && idbm_session_autoscan(session))
-			session_scan_host(session, session->hostno, NULL, true);
+		if (sshdr.asc == 0x3f && sshdr.ascq == 0x0e)
+			session_scan_host(session, session->hostno, NULL, false);
 		break;
 	case ISCSI_ASYNC_MSG_REQUEST_LOGOUT:
 		conn_warn(conn, "Target requests logout within %u seconds" , ntohs(async_hdr->param3));
