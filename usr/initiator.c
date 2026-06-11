@@ -477,8 +477,8 @@ conn_delete_timers(iscsi_conn_t *conn)
 }
 
 static int 
-session_conn_shutdown(iscsi_conn_t *conn, queue_task_t *qtask,
-		      int err)
+session_conn_shutdown(iscsi_conn_t *conn, queue_task_t *curr_qtask,
+		      queue_task_t *override_qtask, int err)
 {
 	iscsi_session_t *session = conn->session;
 
@@ -529,7 +529,8 @@ cleanup:
 		    session->nrec.conn[conn->id].port,
 		    session->nrec.iface.name);
 
-	mgmt_ipc_write_rsp(qtask, err);
+	mgmt_ipc_write_rsp(curr_qtask, err);
+	mgmt_ipc_write_rsp(override_qtask, err);
 	conn_delete_timers(conn);
 	__session_destroy(session);
 	return ISCSI_SUCCESS;
@@ -720,7 +721,7 @@ static void iscsi_login_eh(struct iscsi_conn *conn, struct queue_task *qtask,
 			 * clean connection. write ipc rsp or retry */
 			if (iscsi_login_is_fatal_err(err) ||
 			    !iscsi_retry_initial_login(conn))
-				session_conn_shutdown(conn, qtask, err);
+				session_conn_shutdown(conn, qtask, NULL, err);
 			else {
 				stop_flag = (session->id < INVALID_SESSION_ID) ? STOP_CONN_TERM : 0;
 				conn_debug(6, conn, "connection %p socket_fd: %d stop_flag: %d\n",
@@ -735,7 +736,7 @@ static void iscsi_login_eh(struct iscsi_conn *conn, struct queue_task *qtask,
 			 * clean connection. write ipc rsp or retry */
 			if (iscsi_login_is_fatal_err(err) ||
 			    !iscsi_retry_initial_login(conn))
-				session_conn_shutdown(conn, qtask, err);
+				session_conn_shutdown(conn, qtask, NULL, err);
 			else
 				session_conn_reopen(conn, qtask, 0);
 			break;
@@ -747,7 +748,7 @@ static void iscsi_login_eh(struct iscsi_conn *conn, struct queue_task *qtask,
 			    (session->reopen_cnt > session->reopen_max)) {
 				sess_log_connect(1, session, "Giving up after %d retries",
 						session->reopen_max);
-				session_conn_shutdown(conn, qtask, err);
+				session_conn_shutdown(conn, qtask, NULL, err);
 				break;
 			}
 			/*
@@ -759,7 +760,7 @@ static void iscsi_login_eh(struct iscsi_conn *conn, struct queue_task *qtask,
 			session_conn_reopen(conn, qtask, stop_flag);
 			break;
 		case R_STAGE_SESSION_CLEANUP:
-			session_conn_shutdown(conn, qtask, err);
+			session_conn_shutdown(conn, qtask, NULL, err);
 			break;
 		default:
 			break;
@@ -780,7 +781,7 @@ static void iscsi_login_eh(struct iscsi_conn *conn, struct queue_task *qtask,
 			 */
 			if (iscsi_login_is_fatal_err(err) ||
 			    !iscsi_retry_initial_login(conn))
-				session_conn_shutdown(conn, qtask, err);
+				session_conn_shutdown(conn, qtask, NULL, err);
 			else
 				session_conn_reopen(conn, qtask,
 						    STOP_CONN_RECOVER);
@@ -792,7 +793,7 @@ static void iscsi_login_eh(struct iscsi_conn *conn, struct queue_task *qtask,
 			session_conn_reopen(conn, qtask, STOP_CONN_RECOVER);
 			break;
 		case R_STAGE_SESSION_CLEANUP:
-			session_conn_shutdown(conn, qtask,
+			session_conn_shutdown(conn, qtask, NULL,
 					      ISCSI_ERR_PDU_TIMEOUT);
 			break;
 		default:
@@ -817,7 +818,8 @@ __conn_error_handle(iscsi_session_t *session, iscsi_conn_t *conn)
 	 * just cleanup and return to the user.
 	 */
 	if (conn->logout_qtask) {
-		session_conn_shutdown(conn, conn->logout_qtask, ISCSI_SUCCESS);
+		session_conn_shutdown(conn, conn->logout_qtask, NULL,
+				      ISCSI_SUCCESS);
 		return;
 	}
 
@@ -902,7 +904,7 @@ static void session_conn_error(void *data)
 
 	switch (error) {
 	case ISCSI_ERR_INVALID_HOST:
-		if (session_conn_shutdown(conn, NULL, ISCSI_SUCCESS))
+		if (session_conn_shutdown(conn, NULL, NULL, ISCSI_SUCCESS))
 			log_error("BUG: Could not shutdown session:%d.", sid);
 		break;
 	default:
@@ -1201,7 +1203,8 @@ static void iscsi_stop(void *data)
 			   strerror(rc));
 	}
 
-	rc = session_conn_shutdown(conn, conn->logout_qtask, ISCSI_SUCCESS);
+	rc = session_conn_shutdown(conn, conn->logout_qtask, NULL,
+				   ISCSI_SUCCESS);
 	if (rc)
 		log_error("BUG: Could not shutdown session:%d.", sid);
 }
@@ -1586,7 +1589,7 @@ static void setup_offload_login_phase(iscsi_conn_t *conn)
 			    &rc) || rc) {
 		if (rc == -EEXIST) {
 			conn_error(conn, "Session already exists.");
-			session_conn_shutdown(conn, c->qtask,
+			session_conn_shutdown(conn, c->qtask, NULL,
 					      ISCSI_ERR_SESS_EXISTS);
 		} else {
 			log_error("can't start connection %d:%d retcode (%d)",
@@ -1718,7 +1721,7 @@ static void session_conn_poll(void *data)
 	return;
 
 cleanup:
-	session_conn_shutdown(conn, qtask, err);
+	session_conn_shutdown(conn, qtask, NULL, err);
 }
 
 static void session_conn_process_login(void *data)
@@ -2151,38 +2154,27 @@ int session_logout_task(int sid, queue_task_t *qtask)
 	}
 	conn = &session->conn[0];
 
-	/*
-	 * If syncing up, in XPT_WAIT, and REOPENing, then return
-	 * an informative error, since the target for this session
-	 * is likely not connected
-	 */
-	if (session->notify_qtask &&
-	    (conn->state == ISCSI_CONN_STATE_XPT_WAIT) &&
-	    (session->r_stage == R_STAGE_SESSION_REOPEN)) {
-		log_warning("session %d cannot be terminted because "
-			    "it's trying to reconnect: try again later",
-			session->id);
-		return ISCSI_ERR_SESSION_NOT_CONNECTED;
+	if (dconfig->safe_logout && session_in_use(sid)) {
+		sess_error(session, "is actively in use for mounted storage, and iscsid.safe_logout is configured.");
+		return ISCSI_ERR_BUSY;
+	}
+
+	if (session->notify_qtask) {
+		sess_warn(session, "Forcing removal of syncing session.");
+		return session_conn_shutdown(conn, session->notify_qtask, qtask,
+					     ISCSI_SUCCESS);
 	}
 
 	/*
-	 * If syncing up and not reconnecting,
-	 * or if this is the initial login and mgmt_ipc
-	 * has not been notified of that result fail the logout request
+	 * If this is the initial login and mgmt_ipc has not been notified of
+	 * that result fail the logout request.
 	 */
-	if (session->notify_qtask ||
-	    ((conn->state == ISCSI_CONN_STATE_XPT_WAIT ||
+	if ((conn->state == ISCSI_CONN_STATE_XPT_WAIT ||
 	      conn->state == ISCSI_CONN_STATE_IN_LOGIN) &&
 	    (session->r_stage == R_STAGE_NO_CHANGE ||
-	     session->r_stage == R_STAGE_SESSION_REDIRECT))) {
-		sess_error(session, "in invalid state for logout. Try again later.");
+	     session->r_stage == R_STAGE_SESSION_REDIRECT)) {
+		sess_error(session, "Initial login in progress. Try again later.");
 		return ISCSI_ERR_INTERNAL;
-	}
-
-	if (dconfig->safe_logout && session_in_use(sid)) {
-		log_error("Session %d is actively in use for mounted storage, "
-			  "and iscsid.safe_logout is configured.", session->id);
-		return ISCSI_ERR_BUSY;
 	}
 
 	/* FIXME: logout all active connections */
@@ -2213,7 +2205,7 @@ int session_logout_task(int sid, queue_task_t *qtask)
 			   strerror(rc));
 		/* fallthrough */
 	default:
-		rc = session_conn_shutdown(conn, qtask, ISCSI_SUCCESS);
+		rc = session_conn_shutdown(conn, qtask, NULL, ISCSI_SUCCESS);
 		break;
 	}
 
