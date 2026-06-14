@@ -1052,6 +1052,29 @@ static void session_scan_host(struct iscsi_session *session, int hostno,
 		mgmt_ipc_write_rsp(qtask, ISCSI_ERR_INTERNAL);
 }
 
+static void session_rescan_host(iscsi_session_t *session, iscsi_conn_t *conn,
+				queue_task_t *qtask)
+{
+	enum iscsi_kern_tgt_state tgt_state;
+	bool rescan = true;
+
+	tgt_state = iscsi_sysfs_get_tgt_state_var(session->id);
+	/*
+	 * If this is a sync and we didn't get to scan the first time then
+	 * perform a normal scan because we could have sent a iscsiadm
+	 * response before iscsid exited.
+	 */
+	if (session->notify_qtask && tgt_state == ISCSI_TGT_ALLOCATED)
+		rescan = false;
+
+	session->notify_qtask = NULL;
+
+	session_scan_host(session, session->hostno, NULL, rescan);
+	mgmt_ipc_write_rsp(qtask, ISCSI_SUCCESS);
+	conn_warn(conn, "is operational after recovery (%d attempts)",
+		  session->reopen_cnt);
+}
+
 static void
 setup_full_feature_phase(iscsi_conn_t *conn)
 {
@@ -1092,13 +1115,7 @@ setup_full_feature_phase(iscsi_conn_t *conn)
 			    session->nrec.conn[conn->id].port,
 			    session->nrec.iface.name);
 	} else {
-		session->notify_qtask = NULL;
-
-		session_scan_host(session, session->hostno, NULL, true);
-		mgmt_ipc_write_rsp(c->qtask, ISCSI_SUCCESS);
-		log_warning("connection%d:%d is operational after recovery "
-			    "(%d attempts)", session->id, conn->id,
-			     session->reopen_cnt);
+		session_rescan_host(session, conn, c->qtask);
 	}
 
 	/*
@@ -1748,9 +1765,7 @@ static void session_conn_process_login(void *data)
 			    session->nrec.conn[conn->id].port,
 			    session->nrec.iface.name);
 	} else {
-		session_scan_host(session, session->hostno, NULL, true);
-		session->notify_qtask = NULL;
-		mgmt_ipc_write_rsp(c->qtask, ISCSI_SUCCESS);
+		session_rescan_host(session, conn, c->qtask);
 	}
 
 	/*
