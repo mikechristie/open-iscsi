@@ -90,6 +90,17 @@ do {								\
 		   conn->session->id, conn->id, ##__VA_ARGS__);	\
 } while(0)
 
+#define sess_error(session, fmt, ...)				\
+do {								\
+	if (session == NULL) { 					\
+		log_error(fmt, ##__VA_ARGS__);			\
+		break;						\
+	}							\
+	log_error("session%d: " fmt,				\
+		   session->id, ##__VA_ARGS__);			\
+} while(0)
+
+
 typedef enum iscsi_session_r_stage_e {
 	R_STAGE_NO_CHANGE,
 	R_STAGE_SESSION_CLEANUP,

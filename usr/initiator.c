@@ -2175,9 +2175,7 @@ int session_logout_task(int sid, queue_task_t *qtask)
 	      conn->state == ISCSI_CONN_STATE_IN_LOGIN) &&
 	    (session->r_stage == R_STAGE_NO_CHANGE ||
 	     session->r_stage == R_STAGE_SESSION_REDIRECT))) {
-invalid_state:
-		log_error("session %d in invalid state for logout. "
-			   "Try again later", session->id);
+		sess_error(session, "in invalid state for logout. Try again later.");
 		return ISCSI_ERR_INTERNAL;
 	}
 
@@ -2189,8 +2187,10 @@ invalid_state:
 
 	/* FIXME: logout all active connections */
 	conn = &session->conn[0];
-	if (conn->logout_qtask)
-		goto invalid_state;
+	if (conn->logout_qtask) {
+		sess_error(session, "Failing new logout request. Logout in progress.");
+		return ISCSI_ERR_INTERNAL;
+	}
 
 	qtask->conn = conn;
 	qtask->rsp.command = MGMT_IPC_SESSION_LOGOUT;
