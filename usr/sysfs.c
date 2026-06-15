@@ -52,7 +52,7 @@ static void remove_trailing_chars(char *path, char c)
 /* this converts udevs logging to ours. */
 #define dbg(format, arg...)						\
 	do {								\
-		log_debug(3, "%s: " format, __FUNCTION__,## arg);	\
+		log_debug(6, "%s: " format, __FUNCTION__,## arg);	\
 	} while (0)
 
 /*
