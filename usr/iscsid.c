@@ -588,6 +588,15 @@ int main(int argc, char *argv[])
 		ipc->auth_type = ISCSI_IPC_AUTH_LEGACY;
 	free(ipc_auth_uid);
 
+	/*
+	 * Validate before syncing or processing new commands so we don't
+	 * remove a new session or remove a session from under the sync loop
+	 * We can do it this early because we are only cleaning up the kernel
+	 * and not performing actual login/logout operations which require
+	 * more setup, may block or need to access the root FS.
+	 */
+	iscsi_sysfs_validate_kernel(validate_kernel_session);
+
 	/* see if we have any stale sessions to recover */
 	sessions_to_recover = iscsi_sysfs_count_sessions();
 	if (sessions_to_recover) {

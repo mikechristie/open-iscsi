@@ -2212,3 +2212,28 @@ char *iscsi_sysfs_get_iscsi_kernel_version(void)
 {
 	return sysfs_attr_get_value("/module/scsi_transport_iscsi", "version");
 }
+
+void iscsi_sysfs_validate_kernel(iscsi_sysfs_validate_fn *validate_fn)
+{
+	struct dirent **namelist = NULL;
+	uint32_t sid;
+	int n, i;
+
+	n = scandir(ISCSI_SESSION_DIR, &namelist, trans_filter, alphasort);
+	if (n <= 0)
+		return;
+
+	for (i = 0; i < n; i++) {
+		if (sscanf(namelist[i]->d_name, "session%d", &sid) != 1) {
+			log_error("Found invalid session: %s. Could not get session ID. Reboot is required to cleanup session.",
+				  namelist[i]->d_name);
+			continue;
+		}
+
+		validate_fn(sid);
+	}
+
+	for (i = 0; i < n; i++)
+		free(namelist[i]);
+	free(namelist);
+}

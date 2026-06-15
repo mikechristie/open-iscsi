@@ -43,6 +43,8 @@ extern int iscsi_sysfs_get_sessioninfo_by_id(struct session_info *info,
 					     char *sys_session);
 extern bool iscsi_sysfs_has_required_sess_info(uint32_t sid);
 extern int iscsi_sysfs_session_has_leadconn(uint32_t sid);
+typedef void (iscsi_sysfs_validate_fn)(uint32_t sid);
+extern void iscsi_sysfs_validate_kernel(void (*fn)(uint32_t sid));
 
 typedef int (iscsi_sysfs_session_op_fn)(void *, struct session_info *);
 typedef int (iscsi_sysfs_host_op_fn)(void *, struct host_info *);

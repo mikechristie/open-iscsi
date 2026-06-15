@@ -2103,6 +2103,157 @@ sync_conn(iscsi_session_t *session, uint32_t cid)
 	return 0;
 }
 
+/**
+ * validate_kernel_session - cleanup session if kernel is in invalid state
+ *
+ * If iscsid dies while we are adding/removing a session we can leave the
+ * kernel in a state where future iscsiadm commands will fail because there's
+ * not enough info like the {targetname,portal,iface}. This detects those
+ * types of cases and cleans up the kernel.
+ *
+ * For logout we will also cleanup partial removals, even if there's enough
+ * state tor rebuild a session, so we don't waste time doing a relogin just
+ * to logout. Safe logout has already been checked so we know the user is ok
+ * with forced logouts.
+ */
+void validate_kernel_session(uint32_t sid)
+{
+	int tgt_state, conn_state;
+	struct iscsi_transport *t;
+	int rc = ISCSI_SUCCESS;
+
+	t = iscsi_sysfs_get_transport_by_sid(sid);
+	if (!t) {
+		log_error("session%d: Could not cleanup session. Transport not found.",
+			  sid);
+		return;
+	}
+
+	/*
+	 * We only support iscsi_tcp for now as it should cover 99% of uses
+	 * cases, and we don't have hw to test every offload driver.
+	 */
+	if (strcmp(t->name, "tcp"))
+		return;
+
+	tgt_state = iscsi_sysfs_get_tgt_state_var(sid);
+	switch (tgt_state) {
+	case ISCSI_TGT_SCANNED:
+		/*
+		 * Easy case where we are running a new kernel
+		 * (target state was added in 6.2) and finished an
+		 * initial login and scanned the target.
+		 */
+		return;
+	case ISCSI_TGT_UNBINDING:
+	case ISCSI_TGT_UNBOUND:
+		/*
+		 * Check the conn next incase this is not the first time iscsid
+		 * restarted and last time we started a unclean shutdown.
+		 */
+		break;
+	default:
+		/*
+		 * We don't have enough info about what was going on so
+		 * check the conn next.
+		 *
+		 * Note: ISCSI_TGT_ALLOCATED could mean we never got to
+		 * the scan stage or hit an issue in the kernel where if
+		 * the connection is failed when we scan, the scan is
+		 * skipped.
+		 */
+		break;
+	}
+
+	/*
+	 * Either we never got to the conn creation stage or the conn was
+	 * removed during removal. Either way cleanup what's leftever
+	 * because we can't complete the original operation.
+	 */
+	if (!iscsi_sysfs_session_has_leadconn(sid)) {
+		log_warning("session%d: connection was not added or was removed. Removing session to prevent stale session.",
+			    sid);
+		goto destroy_session;
+	}
+
+	conn_state = iscsi_sysfs_get_conn_state_var(sid);
+	switch (conn_state) {
+	case ISCSI_CONN_DOWN:
+		/*
+		 * Connection was already stopped for termination or iscsid
+		 * exited after ISCSI_UEVENT_CREATE_CONN.
+		 */
+		log_warning("session%d: connection was stopped for termination or was never setup. Removing session to prevent stale session.",
+			    sid);
+		goto destroy_conn;
+	case ISCSI_CONN_UP:
+	case ISCSI_CONN_FAILED:
+	case ISCSI_CONN_BOUND:
+	default:
+		if (tgt_state == ISCSI_TGT_UNBINDING ||
+		    tgt_state == ISCSI_TGT_UNBOUND) {
+			/*
+			 * We were removing a session that exited after/while
+			 * removing the target. For the ISCSI_TGT_UNBINDING
+			 * case we will do an unclean shutdown as we know
+			 * that the safe logout feature was already checked.
+			 * We might not do a SYNC_CACHE but that also happens
+			 * if the connection is failed.
+			 */
+			log_warning("session%d: target removal detected. Finishing session removal.",
+				    sid);
+			goto stop_conn;
+		}
+	}
+
+	if (!iscsi_sysfs_has_required_sess_info(sid)) {
+		/*
+		 * We went into ISCSI_CONN_FAILED/ISCSI_CONN_BOUND while
+		 * creating a session and then iscsid exited, so we never set
+		 * the tpgt and didn't get to do ISCSI_UEVENT_START_CONN.
+		 */
+		log_warning("session%d: connection info was not initialized in the kernel. Removing session to prevent stale session.",
+			    sid);
+		goto stop_conn;
+	}
+
+	/*
+	 * Warning:
+	 * 1. iscsid did ISCSI_UEVENT_START_CONN then it died and the kernel
+	 * dropped the connection. We don't know if iscsid was able to send
+	 * a response, so we sync since we don't want to remove a session if
+	 * successful response was returned.
+	 * 2. For crashes during logout, iscsid normally will not have sent
+	 * a response to iscsiadm but we will always try to cleanup because
+	 * we don't want to leave the kernel in an invalid state.
+	 */
+	return;
+
+stop_conn:
+	rc = ipc->stop_conn(t->handle, sid, 0, STOP_CONN_TERM);
+	if (rc) {
+		log_error("session%d: Could not stop connection for cleanup termination: %d.",
+			  sid, rc);
+		return;
+	}
+
+destroy_conn:
+	rc = ipc->destroy_conn(t->handle, sid, 0);
+	if (rc) {
+		log_error("session%d: Could not delete connection for cleanup: %d.",
+			  sid, rc);
+		return;
+	}
+
+destroy_session:
+	rc = ipc->destroy_session(t->handle, sid);
+	if (rc) {
+		log_error("session%d: Could not delete session for cleanup: %d.",
+			  sid, rc);
+		return;
+	}
+}
+
 int
 iscsi_sync_session(node_rec_t *rec, queue_task_t *qtask, uint32_t sid)
 {

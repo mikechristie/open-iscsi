@@ -24,6 +24,7 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <poll.h>
+#include <stdbool.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <sys/signalfd.h>
