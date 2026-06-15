@@ -1428,6 +1428,21 @@ iscsi_sysfs_get_required_sess_info(struct session_info *info,
 	return 0;
 }
 
+bool iscsi_sysfs_has_required_sess_info(uint32_t sid)
+{
+	char session_sysfs_id[NAME_SIZE] = { 0 };
+	struct session_info info = { 0 };
+
+	snprintf(session_sysfs_id, sizeof(session_sysfs_id), ISCSI_SESSION_ID,
+		 sid);
+
+	info.sid = sid;
+	if (iscsi_sysfs_get_required_sess_info(&info, session_sysfs_id, true))
+		return false;
+	else
+		return true;
+}
+
 int iscsi_sysfs_get_sessioninfo_by_id(struct session_info *info, char *session)
 {
 	uint32_t host_no;

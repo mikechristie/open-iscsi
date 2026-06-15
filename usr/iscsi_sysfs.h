@@ -41,6 +41,7 @@ extern void free_transports(void);
 extern char *iscsi_sysfs_get_iscsi_kernel_version(void);
 extern int iscsi_sysfs_get_sessioninfo_by_id(struct session_info *info,
 					     char *sys_session);
+extern bool iscsi_sysfs_has_required_sess_info(uint32_t sid);
 extern int iscsi_sysfs_session_has_leadconn(uint32_t sid);
 
 typedef int (iscsi_sysfs_session_op_fn)(void *, struct session_info *);
