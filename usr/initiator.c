@@ -1611,7 +1611,8 @@ static void session_conn_poll(void *data)
 	int err = ISCSI_SUCCESS;
 	queue_task_t *qtask = ev_context->data;
 	iscsi_login_context_t *c = &conn->login_context;
-	int rc;
+	int rc, tpgt = PORTAL_GROUP_TAG_UNKNOWN;
+	bool first_login = false;
 
 	iscsi_ev_context_put(ev_context);
 
@@ -1656,6 +1657,8 @@ static void session_conn_poll(void *data)
 			}
 			log_debug(3, "created new iSCSI connection "
 				  "%d:%d", session->id, conn->id);
+
+			first_login = true;
 		}
 
 		iscsi_copy_operational_params(conn,
@@ -1691,6 +1694,23 @@ static void session_conn_poll(void *data)
 		if (session->t->caps & CAP_LOGIN_OFFLOAD) {
 			setup_offload_login_phase(conn);
 			return;
+		}
+
+		if (first_login) {
+			/*
+			 * The kernel initializes this to 0. Most targets start
+			 * at 1, but 0 is a valid value (it's been clarified in
+			 * RFC 7143/SAM4). We initialize this to -1, so we can
+			 * later check to see if the iscsid stayed alive long
+			 * enough to set it to the value returned by the target
+			 */
+			rc = ipc->set_param(session->t->handle, session->id, 0,
+					    ISCSI_PARAM_TPGT, &tpgt, ISCSI_INT);
+			if (rc) {
+				sess_warn(session, "Could not initialize TPGT. Error %d. Restarting iscsid while this sessions first login is in process may result in defaults being used.\n",
+					  rc);
+				rc = 0;
+			}
 		}
 
 		if (iscsi_session_set_params(conn)) {

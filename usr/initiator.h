@@ -100,6 +100,15 @@ do {								\
 		   session->id, ##__VA_ARGS__);			\
 } while(0)
 
+#define sess_warn(session, fmt, ...)				\
+do {								\
+	if (session == NULL) { 					\
+		log_warning(fmt, ##__VA_ARGS__);		\
+		break;						\
+	}							\
+	log_warning("session%d: " fmt,				\
+		   session->id, ##__VA_ARGS__);			\
+} while(0)
 
 typedef enum iscsi_session_r_stage_e {
 	R_STAGE_NO_CHANGE,
