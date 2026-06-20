@@ -99,6 +99,7 @@ void _default_node(struct iscsi_node *node)
 	node->conn.startup = ISCSI_STARTUP_MANUAL;
 	node->conn.port = ISCSI_DEFAULT_PORT;
 	node->conn.tcp.window_size = TCP_WINDOW_SIZE;
+	node->conn.tcp.reserve_mem = 0;
 	node->conn.tcp.type_of_service = 0;
 	node->conn.tmo.login_timeout= DEF_LOGIN_TIMEO;
 	node->conn.tmo.logout_timeout= DEF_LOGOUT_TIMEO;

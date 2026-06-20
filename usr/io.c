@@ -309,12 +309,17 @@ static int bind_conn_to_iface(iscsi_conn_t *conn, struct iface_rec *iface,
 	return 0;
 }
 
+#ifndef SO_RESERVE_MEM
+#define SO_RESERVE_MEM 73
+#endif
+
 int
 iscsi_io_tcp_connect(iscsi_conn_t *conn, int non_blocking)
 {
 	int rc, onearg;
 	struct sockaddr_storage *ss = &conn->saddr;
 	char serv[NI_MAXSERV];
+	socklen_t arglen;
 
 	/* create a socket */
 	conn->socket_fd = socket(ss->ss_family, SOCK_STREAM, IPPROTO_TCP);
@@ -344,7 +349,8 @@ iscsi_io_tcp_connect(iscsi_conn_t *conn, int non_blocking)
 	/* optionally set the window sizes */
 	if (conn->tcp_window_size) {
 		int window_size = conn->tcp_window_size;
-		socklen_t arglen = sizeof (window_size);
+
+		arglen = sizeof (window_size);
 
 		if (setsockopt(conn->socket_fd, SOL_SOCKET, SO_RCVBUF,
 		       (char *) &window_size, sizeof (window_size)) < 0) {
@@ -376,9 +382,27 @@ iscsi_io_tcp_connect(iscsi_conn_t *conn, int non_blocking)
 		}
 	}
 
+	if (conn->reserve_mem > 0) {
+		int reserve_mem = conn->reserve_mem;
+
+		arglen = sizeof(reserve_mem);
+
+		rc = setsockopt(conn->socket_fd, SOL_SOCKET, SO_RESERVE_MEM,
+				(char *) &reserve_mem, arglen);
+		if (rc < 0) {
+			conn_warn(conn, "Failed to set reserve mem to %d. Error %d.",
+				  reserve_mem, errno);
+		}
+
+		rc = getsockopt(conn->socket_fd, SOL_SOCKET, SO_RESERVE_MEM,
+				(char *) &reserve_mem, &arglen);
+		conn_debug(1, conn, "get reserve mem size rc %d. val %d",
+			   rc, reserve_mem);
+	}
+
 	/* optionally set the congestion control algo */
 	if (*conn->tcp_congestion) {
-		socklen_t arglen = strlen(conn->tcp_congestion);
+		arglen = strlen(conn->tcp_congestion);
 
 		if (setsockopt(conn->socket_fd, IPPROTO_TCP, TCP_CONGESTION,
 		               conn->tcp_congestion, arglen) < 0) {

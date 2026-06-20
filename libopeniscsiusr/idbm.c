@@ -1135,6 +1135,8 @@ static void _idbm_node_rec_link(struct iscsi_node *node, struct idbm_rec *recs, 
 		   IDBM_SHOW, num, _CAN_MODIFY);
 	_rec_str(CONN_CONGESTION, recs, node, conn.tcp.congestion_control,
 	         IDBM_SHOW, num, _CAN_MODIFY);
+	_rec_int32(CONN_RESERVE_MEM, recs, node, conn.tcp.reserve_mem,
+		   IDBM_SHOW, num, _CAN_MODIFY);
 	_rec_int64(CONN_LOGOUT_TMO, recs, node, conn.tmo.logout_timeout,
 		   IDBM_SHOW, num, _CAN_MODIFY);
 	_rec_int64(CONN_LOGIN_TMO, recs, node, conn.tmo.login_timeout,

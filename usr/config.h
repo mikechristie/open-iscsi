@@ -101,6 +101,7 @@ struct iscsi_error_timeout_config {
  */
 struct iscsi_tcp_config {
 	int window_size;
+	int reserve_mem;
 	int type_of_service;	/* try to set IP TOS bits */
 	char congestion_control[CONGESTION_STR_MAX_LEN];
 };

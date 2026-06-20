@@ -191,6 +191,7 @@ typedef struct iscsi_conn {
 	/* address received during login */
 	struct sockaddr_storage failback_saddr;
 	int tcp_window_size;
+	int reserve_mem;
 	int type_of_service;
 	char tcp_congestion[CONGESTION_STR_MAX_LEN];
 

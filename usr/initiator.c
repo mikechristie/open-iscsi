@@ -316,6 +316,7 @@ __session_conn_create(iscsi_session_t *session, int cid)
 
 	/* TCP options */
 	conn->tcp_window_size = conn_rec->tcp.window_size;
+	conn->reserve_mem = conn_rec->tcp.reserve_mem;
 	/* FIXME: type_of_service */
 	memcpy(conn->tcp_congestion, conn_rec->tcp.congestion_control, sizeof(conn->tcp_congestion));
 

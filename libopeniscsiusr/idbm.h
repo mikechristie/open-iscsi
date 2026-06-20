@@ -124,6 +124,7 @@ struct iscsi_tcp_config {
 	int64_t					type_of_service;
 	/* ^ try to set IP TOS bits */
 	char					congestion_control[CONGESTION_STR_MAX_LEN];
+	int32_t					reserve_mem;
 };
 
 /* all per-session timeouts go in this structure.
