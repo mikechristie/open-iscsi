@@ -313,13 +313,83 @@ static int bind_conn_to_iface(iscsi_conn_t *conn, struct iface_rec *iface,
 #define SO_RESERVE_MEM 73
 #endif
 
+static int iscsi_io_setsockopt(iscsi_conn_t *conn)
+{
+	socklen_t arglen;
+	int rc,  arg;
+
+	arg = 1;
+	arglen = sizeof(arg);
+
+	rc = setsockopt(conn->socket_fd, IPPROTO_TCP, TCP_NODELAY, &arg,
+			arglen);
+	if (rc < 0) {
+		conn_error(conn, "cannot set TCP_NODELAY option on socket");
+		return rc;
+	}
+
+	if (conn->tcp_window_size > 0) {
+		arg = conn->tcp_window_size;
+		arglen = sizeof(arg);
+
+		if (setsockopt(conn->socket_fd, SOL_SOCKET, SO_RCVBUF,
+			       (char *) &arg, arglen) < 0) {
+			conn_warn(conn, "failed to set TCP recv window size to %u. Error %d.",
+				  arg, errno);
+		} else {
+			if (getsockopt(conn->socket_fd, SOL_SOCKET, SO_RCVBUF,
+				       (char *) &arg, &arglen) >= 0)
+				conn_debug(4, conn, "set TCP recv window size to %u, actually got %u",
+					   conn->tcp_window_size, arg);
+		}
+
+		arg = conn->tcp_window_size;
+		arglen = sizeof(arg);
+
+		if (setsockopt(conn->socket_fd, SOL_SOCKET, SO_SNDBUF,
+			       (char *) &arg, arglen) < 0) {
+			conn_warn(conn, "failed to set TCP send window size to %u. Error %d.",
+				  arg, errno);
+		} else {
+			if (getsockopt(conn->socket_fd, SOL_SOCKET, SO_SNDBUF,
+				       (char *) &arg, &arglen) >= 0)
+				conn_debug(4, conn, "set TCP send window size to %u, actually got %u",
+					  conn->tcp_window_size, arg);
+		}
+	}
+
+	if (conn->reserve_mem > 0) {
+		arg = conn->reserve_mem;
+		arglen = sizeof(arg);
+
+		if (setsockopt(conn->socket_fd, SOL_SOCKET, SO_RESERVE_MEM,
+			       (char *) &arg, arglen))
+			conn_warn(conn, "Failed to set reserve mem to %d. Error %d.",
+				  arg, errno);
+
+		if (getsockopt(conn->socket_fd, SOL_SOCKET, SO_RESERVE_MEM,
+				(char *) &arg, &arglen) <= 0)
+			conn_debug(4, conn, "got reserve mem size val %d", arg);
+	}
+
+	if (*conn->tcp_congestion) {
+		arglen = strlen(conn->tcp_congestion);
+
+		if (setsockopt(conn->socket_fd, IPPROTO_TCP, TCP_CONGESTION,
+			       conn->tcp_congestion, arglen) < 0)
+			conn_warn(conn, "failed to set TCP congestion control algo to %s. Error %d.",
+				  conn->tcp_congestion, errno);
+	}
+
+	return 0;
+}
+
 int
 iscsi_io_tcp_connect(iscsi_conn_t *conn, int non_blocking)
 {
-	int rc, onearg;
 	struct sockaddr_storage *ss = &conn->saddr;
 	char serv[NI_MAXSERV];
-	socklen_t arglen;
+	int rc;
 
 	/* create a socket */
 	conn->socket_fd = socket(ss->ss_family, SOCK_STREAM, IPPROTO_TCP);
@@ -338,78 +408,9 @@ iscsi_io_tcp_connect(iscsi_conn_t *conn, int non_blocking)
 		goto close_sock;
 	}
 
-	onearg = 1;
-	rc = setsockopt(conn->socket_fd, IPPROTO_TCP, TCP_NODELAY, &onearg,
-			sizeof (onearg));
-	if (rc < 0) {
-		log_error("cannot set TCP_NODELAY option on socket");
+	rc = iscsi_io_setsockopt(conn);
+	if (rc)
 		goto close_sock;
-	}
-
-	/* optionally set the window sizes */
-	if (conn->tcp_window_size) {
-		int window_size = conn->tcp_window_size;
-
-		arglen = sizeof (window_size);
-
-		if (setsockopt(conn->socket_fd, SOL_SOCKET, SO_RCVBUF,
-		       (char *) &window_size, sizeof (window_size)) < 0) {
-			log_warning("failed to set TCP recv window size "
-				    "to %u", window_size);
-		} else {
-			if (getsockopt(conn->socket_fd, SOL_SOCKET, SO_RCVBUF,
-				       (char *) &window_size, &arglen) >= 0) {
-				log_debug(4, "set TCP recv window size to %u, "
-					  "actually got %u",
-					  conn->tcp_window_size, window_size);
-			}
-		}
-
-		window_size = conn->tcp_window_size;
-		arglen = sizeof (window_size);
-
-		if (setsockopt(conn->socket_fd, SOL_SOCKET, SO_SNDBUF,
-		       (char *) &window_size, sizeof (window_size)) < 0) {
-			log_warning("failed to set TCP send window size "
-				    "to %u", window_size);
-		} else {
-			if (getsockopt(conn->socket_fd, SOL_SOCKET, SO_SNDBUF,
-				       (char *) &window_size, &arglen) >= 0) {
-				log_debug(4, "set TCP send window size to %u, "
-					  "actually got %u",
-					  conn->tcp_window_size, window_size);
-			}
-		}
-	}
-
-	if (conn->reserve_mem > 0) {
-		int reserve_mem = conn->reserve_mem;
-
-		arglen = sizeof(reserve_mem);
-
-		rc = setsockopt(conn->socket_fd, SOL_SOCKET, SO_RESERVE_MEM,
-				(char *) &reserve_mem, arglen);
-		if (rc < 0) {
-			conn_warn(conn, "Failed to set reserve mem to %d. Error %d.",
-				  reserve_mem, errno);
-		}
-
-		rc = getsockopt(conn->socket_fd, SOL_SOCKET, SO_RESERVE_MEM,
-				(char *) &reserve_mem, &arglen);
-		conn_debug(1, conn, "get reserve mem size rc %d. val %d",
-			   rc, reserve_mem);
-	}
-
-	/* optionally set the congestion control algo */
-	if (*conn->tcp_congestion) {
-		arglen = strlen(conn->tcp_congestion);
-
-		if (setsockopt(conn->socket_fd, IPPROTO_TCP, TCP_CONGESTION,
-		               conn->tcp_congestion, arglen) < 0) {
-			log_warning("failed to set TCP congestion control algo "
-				    "to %s", conn->tcp_congestion);
-		}
-	}
 
 	/*
 	 * Build a TCP connection to the target
